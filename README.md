@@ -1,144 +1,219 @@
-## Arquitectura de la Base de Datos MongoDB
+# ETL - Machine Learning (Schema Matching)
 
-La clase `SemanticConfigMongoDb` define una estructura de base de datos diseñada para almacenar configuraciones semánticas y datos de entrenamiento para un modelo de aprendizaje automático (probablemente para matching de campos/entidades). A continuación se describe cada colección, su propósito, esquema e índices.
-
----
-
-### 1. **Colecciones de Configuración Semántica**
-
-Estas colecciones almacenan tokens clasificados que se usan para análisis semántico y preprocesamiento de texto.
-
-#### `tokens_diferenciadores`
-- **Propósito:** Tokens que ayudan a discriminar entre conceptos (ej. *customer*, *vendor*, *sale*).
-- **Esquema:**
-  - `token` (string, único)
-  - `categoria` (string, opcional)
-  - `activo` (boolean)
-  - `notas` (string, opcional)
-  - `fecha_alta` (datetime)
-  - `fecha_modificacion` (datetime)
-- **Índice:** `token` único.
-
-#### `tokens_identidad`
-- **Propósito:** Tokens que representan identificadores únicos (ej. *rfc*, *curp*, *uuid*).
-- **Esquema:**
-  - `token` (string, único)
-  - `tipo` (string, fijo "identidad")
-  - `activo` (boolean)
-  - `fecha_alta` (datetime)
-- **Índice:** `token` único.
-
-#### `stopwords`
-- **Propósito:** Palabras o términos que se eliminan en el preprocesamiento (ej. *cust*, *field*).
-- **Esquema:**
-  - `token` (string, único)
-  - `contexto` (string, ej. "sistema")
-  - `activo` (boolean)
-  - `fecha_alta` (datetime)
-- **Índice:** `token` único.
-
-#### `grupos_semanticos`
-- **Propósito:** Agrupar tokens bajo un mismo concepto semántico (ej. grupo "email" con tokens *correo*, *mail*, *email*).
-- **Esquema:**
-  - `grupo` (string)
-  - `token` (string)
-  - `idioma` (string, ej. "es")
-  - `activo` (boolean)
-  - `fecha_alta` (datetime)
-- **Índices:**
-  - Compuesto único: `(grupo, token, idioma)`
-  - Simple en `token` (para búsquedas inversas)
-
-#### `cambios_log`
-- **Propósito:** Auditoría de cambios en las colecciones anteriores.
-- **Esquema:**
-  - `coleccion` (string)
-  - `accion` (string, ej. "INSERT", "UPDATE")
-  - `token` (string, opcional)
-  - `detalles` (objeto, opcional)
-  - `fecha` (datetime)
-  - `usuario` (string, por defecto "system")
-- **Sin índices explícitos** (pueden añadirse según necesidad).
+Sistema ETL (Extract, Transform, Load) que utiliza Machine Learning para realizar matching inteligente de esquemas entre diferentes plataformas empresariales, como **NetSuite** y **Oracle Primavera Unifier**. El objetivo principal es identificar y emparejar automáticamente campos equivalentes entre sistemas heterogéneos mediante análisis semántico y redes neuronales.
 
 ---
 
-### 2. **Colecciones de Datos de Entrenamiento**
+## Tabla de Contenidos
 
-Estas colecciones almacenan datasets utilizados para entrenar el modelo.
-
-#### `training_datasets`
-- **Propósito:** Metadatos de cada dataset de entrenamiento.
-- **Esquema:**
-  - `_id` (ObjectId, automático)
-  - `dataset_hash` (string, único) – hash SHA256 del contenido para detectar duplicados.
-  - `nombre` (string) – nombre descriptivo.
-  - `version` (string) – versión del dataset.
-  - `metadata` (objeto) – contiene:
-    - `total_pares` (int)
-    - `positivos` (int)
-    - `negativos` (int)
-    - `balance_ratio` (float)
-    - `fecha_generacion` (datetime)
-    - `config` (objeto, opcional) – parámetros de generación.
-  - `fecha_creacion` (datetime)
-  - `fecha_modificacion` (datetime)
-  - `activo` (boolean) – indica si el dataset está vigente.
-- **Índices:**
-  - Único en `dataset_hash`
-  - Descendente en `fecha_creacion`
-  - Simple en `version`
-
-#### `training_pairs`
-- **Propósito:** Pares individuales de campos con su etiqueta de matching.
-- **Esquema:**
-  - `dataset_id` (ObjectId) – referencia al dataset padre.
-  - `indice` (int) – posición dentro del dataset.
-  - `field_a` (string) – primer campo.
-  - `field_b` (string) – segundo campo.
-  - `match` (int) – 1 si son equivalentes, 0 si no.
-  - `tokens_a` (array de strings, opcional) – tokens precomputados para optimización.
-  - `tokens_b` (array de strings, opcional)
-  - `fecha_creacion` (datetime)
-- **Índices:**
-  - Compuesto único: `(dataset_id, field_a, field_b)`
-  - Compuesto: `(dataset_id, match)` para búsquedas rápidas.
+- [Descripción General](#descripción-general)
+- [Arquitectura del Proyecto](#arquitectura-del-proyecto)
+- [Tecnologías](#tecnologías)
+- [Requisitos Previos](#requisitos-previos)
+- [Instalación](#instalación)
+- [Uso](#uso)
+  - [Normalizador de JSON](#normalizador-de-json)
+  - [API REST](#api-rest)
+- [Estructura de la Base de Datos MongoDB](#estructura-de-la-base-de-datos-mongodb)
+- [Contribuir](#contribuir)
+- [Licencia](#licencia)
 
 ---
 
-### 3. **Relaciones y Flujo de Datos**
+## Descripción General
 
-- **Relación 1:N** entre `training_datasets` y `training_pairs` mediante `dataset_id`.
-- **Cache en memoria:** La clase mantiene cachés (`_cache_diferenciadores`, `_cache_identidad`, etc.) para acceder rápidamente a los tokens activos sin consultar MongoDB cada vez. Estos cachés se invalidan cuando se agregan o actualizan tokens.
-- **Métodos principales:**
-  - `guardar_dataset`: inserta metadatos en `training_datasets` y los pares en `training_pairs` en lotes.
-  - `cargar_dataset`: recupera pares, con opción de balanceo y formato de salida.
-  - `exportar_dataset_json`: exporta un dataset a archivo JSON.
-  - Métodos para gestionar tokens y grupos semánticos (`add_token_diferenciador`, `add_to_grupo_semantico`, etc.).
-  - Propiedades (`TOKENS_DIFERENCIADORES`, `GRUPOS_SEMANTICOS`, etc.) que exponen los cachés.
-  - `migrar_datos_iniciales`: carga datos por defecto en las colecciones.
+En integraciones empresariales es habitual necesitar mapear campos entre dos sistemas que usan nombres, estructuras y convenciones diferentes. Este proyecto automatiza ese proceso mediante:
+
+1. **Normalización de esquemas JSON** — Analiza estructuras JSON complejas y las aplana en listas de campos con su tipo y valores.
+2. **Configuración semántica** — Gestiona tokens diferenciadores, tokens de identidad, stopwords y grupos semánticos en MongoDB para preprocesar los nombres de campos.
+3. **Entrenamiento de modelos ML** — Almacena pares de campos etiquetados (match / no match) para entrenar modelos de matching.
+4. **Core Neuronal** *(en desarrollo)* — Módulo de redes neuronales para realizar la predicción de equivalencia entre campos.
 
 ---
 
-### 4. **Consideraciones de Diseño**
+## Arquitectura del Proyecto
 
-- **Optimización de lectura:** Se utilizan cachés en memoria para los tokens activos, reduciendo latencia.
-- **Integridad:** Índices únicos previenen duplicados en tokens y grupos semánticos.
-- **Auditoría:** `cambios_log` registra todas las modificaciones (aunque no se usa en todos los métodos, pero está disponible).
-- **Flexibilidad:** Los datasets se identifican por hash, permitiendo evitar duplicados automáticamente.
-- **Escalabilidad:** Las inserciones en `training_pairs` se realizan en lotes de 1000 para mejorar rendimiento.
+```
+ETL-MachingLearning/
+│
+├── SchemeMatcher/              # Módulo principal de matching de esquemas
+│   ├── main.py                 # API REST con FastAPI
+│   ├── Service/
+│   │   └── normalizer.py       # Normalizador y analizador de estructuras JSON
+│   ├── jsonExample/
+│   │   ├── netsuite.json       # Ejemplo de respuesta de API NetSuite
+│   │   └── unifier.json        # Ejemplo de respuesta de Oracle Primavera Unifier
+│   └── test_main.http          # Archivo de pruebas HTTP para los endpoints
+│
+├── NeuronalCore/               # Módulo de redes neuronales (en desarrollo)
+│
+└── README.md                   # Documentación del proyecto
+```
 
 ---
 
-### 5. **Resumen de Colecciones**
+## Tecnologías
 
-| Colección            | Propósito                                        | Índices Principales                              |
-|----------------------|--------------------------------------------------|--------------------------------------------------|
-| `tokens_diferenciadores` | Tokens discriminadores                          | `token` único                                    |
-| `tokens_identidad`       | Tokens de identidad                             | `token` único                                    |
-| `stopwords`              | Palabras a eliminar en preprocesamiento         | `token` único                                    |
-| `grupos_semanticos`      | Agrupación semántica de tokens                  | `(grupo, token, idioma)` único, `token`          |
-| `cambios_log`            | Auditoría de cambios                            | (ninguno)                                        |
-| `training_datasets`      | Metadatos de datasets de entrenamiento          | `dataset_hash` único, `fecha_creacion`, `version`|
-| `training_pairs`         | Pares de campos con etiquetas                   | `(dataset_id, field_a, field_b)` único, `(dataset_id, match)` |
+| Componente         | Tecnología                                        |
+|--------------------|---------------------------------------------------|
+| Lenguaje           | Python 3.10+                                      |
+| Framework API      | [FastAPI](https://fastapi.tiangolo.com/)           |
+| Base de Datos      | [MongoDB](https://www.mongodb.com/)                |
+| Machine Learning   | En desarrollo (NeuronalCore)                       |
+| Servidor ASGI      | [Uvicorn](https://www.uvicorn.org/)                |
 
-Esta arquitectura proporciona una base sólida para gestionar configuraciones semánticas y datos de entrenamiento, con mecanismos de caché para un acceso eficiente y persistencia confiable.
+---
+
+## Requisitos Previos
+
+- **Python** 3.10 o superior
+- **MongoDB** en ejecución (local o remoto)
+- **pip** (gestor de paquetes de Python)
+
+---
+
+## Instalación
+
+1. **Clonar el repositorio:**
+
+   ```bash
+   git clone https://github.com/ByAncort/ETL-MachingLearning.git
+   cd ETL-MachingLearning
+   ```
+
+2. **Crear un entorno virtual (recomendado):**
+
+   ```bash
+   python -m venv venv
+   source venv/bin/activate        # Linux / macOS
+   # venv\Scripts\activate         # Windows
+   ```
+
+3. **Instalar dependencias:**
+
+   ```bash
+   pip install fastapi uvicorn pymongo
+   ```
+
+4. **Configurar MongoDB:**
+
+   Asegúrate de tener una instancia de MongoDB corriendo. Por defecto, la configuración espera una conexión en `localhost:27017`.
+
+---
+
+## Uso
+
+### Normalizador de JSON
+
+El módulo `normalizer.py` analiza estructuras JSON anidadas y genera una lista plana de campos con su tipo y valores. Es útil para comparar esquemas de diferentes sistemas.
+
+```bash
+cd SchemeMatcher
+python Service/normalizer.py
+```
+
+**Salida de ejemplo:**
+
+```
+=== ESTRUCTURA NETSUITE ===
+{'campo': 'links', 'tipo': 'array'}
+{'campo': 'links.rel', 'tipo': 'str', 'value': 'self'}
+{'campo': 'links.href', 'tipo': 'str', 'value': 'https://...'}
+{'campo': 'count', 'tipo': 'int', 'value': '2'}
+{'campo': 'items', 'tipo': 'array'}
+{'campo': 'items.custbody_bea_bp_primavera', 'tipo': 'str', 'value': 'Prefactura de Arrendamiento'}
+...
+
+=== ESTRUCTURA UNIFIER ===
+{'campo': 'options.bpname', 'tipo': 'str', 'value': 'Prefactura de Arrendamiento'}
+{'campo': 'data', 'tipo': 'array'}
+{'campo': 'data.uuu_record_last_update_date', 'tipo': 'str', 'value': '02-19-2026 15:19:46'}
+...
+```
+
+### API REST
+
+Inicia el servidor FastAPI con Uvicorn:
+
+```bash
+cd SchemeMatcher
+uvicorn main:app --reload
+```
+
+El servidor estará disponible en `http://127.0.0.1:8000`.
+
+**Endpoints disponibles:**
+
+| Método | Ruta            | Descripción                  |
+|--------|-----------------|------------------------------|
+| GET    | `/`             | Mensaje de bienvenida        |
+| GET    | `/hello/{name}` | Saludo personalizado         |
+
+**Documentación interactiva:**
+
+- Swagger UI: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- ReDoc: [http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)
+
+---
+
+## Estructura de la Base de Datos MongoDB
+
+La clase `SemanticConfigMongoDb` define la arquitectura de base de datos para almacenar configuraciones semánticas y datos de entrenamiento.
+
+### Colecciones de Configuración Semántica
+
+Almacenan tokens clasificados para análisis semántico y preprocesamiento de texto.
+
+| Colección                | Propósito                                   | Índice Principal                        |
+|--------------------------|---------------------------------------------|-----------------------------------------|
+| `tokens_diferenciadores` | Tokens que discriminan entre conceptos      | `token` (único)                         |
+| `tokens_identidad`       | Tokens de identificadores únicos (RFC, CURP) | `token` (único)                         |
+| `stopwords`              | Palabras eliminadas en preprocesamiento     | `token` (único)                         |
+| `grupos_semanticos`      | Agrupación semántica de tokens              | `(grupo, token, idioma)` único, `token` |
+| `cambios_log`            | Auditoría de cambios                        | (ninguno)                               |
+
+### Colecciones de Datos de Entrenamiento
+
+| Colección           | Propósito                                      | Índices Principales                                               |
+|---------------------|-------------------------------------------------|-------------------------------------------------------------------|
+| `training_datasets` | Metadatos de datasets (hash SHA256, versión)   | `dataset_hash` único, `fecha_creacion`, `version`                 |
+| `training_pairs`    | Pares de campos con etiqueta match (1) o no (0) | `(dataset_id, field_a, field_b)` único, `(dataset_id, match)`     |
+
+### Flujo de Datos
+
+```
+tokens_diferenciadores ─┐
+tokens_identidad ───────┤
+stopwords ──────────────┼──> Preprocesamiento de campos
+grupos_semanticos ──────┘
+                                    │
+                                    v
+                          training_datasets (1:N) ──> training_pairs
+                                    │
+                                    v
+                            Modelo ML (NeuronalCore)
+```
+
+**Características clave:**
+
+- **Caché en memoria** para acceso rápido a tokens activos sin consultas repetidas a MongoDB.
+- **Índices únicos** que previenen duplicados en tokens y grupos semánticos.
+- **Inserciones en lotes** de 1000 registros para `training_pairs`.
+- **Hash SHA256** para identificar datasets y evitar duplicados automáticamente.
+- **Log de auditoría** en `cambios_log` para rastrear modificaciones.
+
+---
+
+## Contribuir
+
+1. Haz un fork del repositorio.
+2. Crea una rama para tu feature: `git checkout -b feature/nueva-funcionalidad`
+3. Realiza tus cambios y haz commit: `git commit -m "Agregar nueva funcionalidad"`
+4. Sube tu rama: `git push origin feature/nueva-funcionalidad`
+5. Abre un Pull Request.
+
+---
+
+## Licencia
+
+Este proyecto no tiene una licencia definida actualmente. Contacta al autor para más información.
