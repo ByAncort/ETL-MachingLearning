@@ -1,0 +1,32 @@
+{
+    "links": [
+        {
+            "rel": "self",
+            "href": "https://8155807-sb1.suitetalk.api.netsuite.com/services/rest/query/v1/dataset/custdatasetcfdireturnprimavera/result"
+        }
+    ],
+    "count": 2,
+    "hasMore": false,
+    "items": [
+        {
+            "links": [],
+            "custbody_bea_bp_primavera": "Prefactura de Arrendamiento",
+            "custbody_psg_ei_status": "10",
+            "externalid": "PRP-0001.PFA-000077",
+            "tranid": "CD06"
+        },
+        {
+            "links": [],
+            "custbody_bea_bp_primavera": "Prefactura de Arrendamiento",
+            "custbody_bea_pac_detail": "Documento electrónico correctamente certificado",
+            "custbody_mx_cfdi_certify_timestamp": "2026-03-12T09:38:25",
+            "custbody_mx_cfdi_folio": "74",
+            "custbody_mx_cfdi_uuid": "6E358547-9A17-4617-9A12-812E093050CE",
+            "custbody_psg_ei_status": "3",
+            "externalid": "PRP-0001.PFA-000076",
+            "tranid": "INV74"
+        }
+    ],
+    "offset": 0,
+    "totalResults": 2
+}
