@@ -7,14 +7,13 @@ Sistema ETL (Extract, Transform, Load) que utiliza Machine Learning para realiza
 ## Tabla de Contenidos
 
 - [Descripción General](#descripción-general)
-- [Arquitectura del Proyecto](#arquitectura-del-proyecto)
+- [Arquitectura General](#arquitectura-general)
+- [Pipeline ETL](#pipeline-etl)
 - [Tecnologías](#tecnologías)
 - [Requisitos Previos](#requisitos-previos)
 - [Instalación](#instalación)
-- [Uso](#uso)
-  - [Normalizador de JSON](#normalizador-de-json)
-  - [API REST](#api-rest)
 - [Estructura de la Base de Datos MongoDB](#estructura-de-la-base-de-datos-mongodb)
+- [Modelo de Entrenamiento](#modelo-de-entrenamiento)
 - [Contribuir](#contribuir)
 - [Licencia](#licencia)
 
@@ -24,35 +23,123 @@ Sistema ETL (Extract, Transform, Load) que utiliza Machine Learning para realiza
 
 En integraciones empresariales es habitual necesitar mapear campos entre dos sistemas que usan nombres, estructuras y convenciones diferentes. Este proyecto automatiza ese proceso mediante:
 
-1. **Normalización de esquemas JSON** — Analiza estructuras JSON complejas y las aplana en listas de campos con su tipo y valores.
-2. **Configuración semántica** — Gestiona tokens diferenciadores, tokens de identidad, stopwords y grupos semánticos en MongoDB para preprocesar los nombres de campos.
-3. **Entrenamiento de modelos ML** — Almacena pares de campos etiquetados (match / no match) para entrenar modelos de matching.
-4. **Core Neuronal** *(en desarrollo)* — Módulo de redes neuronales para realizar la predicción de equivalencia entre campos.
+1. **Configuración semántica** — Gestiona tokens diferenciadores, tokens de identidad, stopwords y grupos semánticos en MongoDB para preprocesar los nombres de campos.
+2. **Entrenamiento de modelos ML** — Almacena pares de campos etiquetados (match / no match) para entrenar modelos de matching.
+3. **Core Neuronal** *(en desarrollo)* — Módulo de redes neuronales para realizar la predicción de equivalencia entre campos.
 
 ---
 
-## Arquitectura del Proyecto
+## Arquitectura General
 
+```mermaid
+graph TB
+    subgraph Fuentes["Fuentes de Datos"]
+        NS[NetSuite API]
+        UNI[Oracle Primavera Unifier]
+        OTHER[Otros Sistemas]
+    end
+
+    subgraph ETL["Pipeline ETL"]
+        EXT[Extracción]
+        TRANS[Transformación y Normalización]
+        LOAD[Carga]
+    end
+
+    subgraph ML["Motor de Machine Learning"]
+        SEM[Configuración Semántica]
+        TRAIN[Datos de Entrenamiento]
+        MODEL[Modelo Neuronal]
+    end
+
+    subgraph Destino["Destino"]
+        MAP[Mapeo de Campos Identificado]
+        DB[(MongoDB)]
+    end
+
+    NS --> EXT
+    UNI --> EXT
+    OTHER --> EXT
+    EXT --> TRANS
+    TRANS --> LOAD
+
+    SEM --> TRANS
+    TRAIN --> MODEL
+    MODEL --> MAP
+    LOAD --> DB
+    MAP --> LOAD
 ```
-ETL-MachingLearning/
-│
-├── SchemeMatcher/              # Módulo principal de matching de esquemas
-│   ├── main.py                 # API REST con FastAPI
-│   ├── Service/
-│   │   └── normalizer.py       # Normalizador y analizador de estructuras JSON
-│   ├── jsonExample/
-│   │   ├── netsuite.json       # Ejemplo de respuesta de API NetSuite
-│   │   └── unifier.json        # Ejemplo de respuesta de Oracle Primavera Unifier
-│   └── test_main.http          # Archivo de pruebas HTTP para los endpoints
-│
-├── NeuronalCore/               # Módulo de redes neuronales (en desarrollo)
-│
-└── README.md                   # Documentación del proyecto
+
+---
+
+## Pipeline ETL
+
+El flujo completo del proceso ETL se representa a continuación:
+
+```mermaid
+flowchart LR
+    A[API Origen] -->|JSON| B(Extracción de Esquema)
+    B --> C{Preprocesamiento}
+    C -->|Tokens| D[Normalización Semántica]
+    D --> E[Generación de Pares]
+    E --> F{Modelo ML}
+    F -->|Match| G[Mapeo Confirmado]
+    F -->|No Match| H[Descartado]
+    G --> I[Carga al Destino ETL]
+
+    style A fill:#4a9eff,color:#fff
+    style F fill:#ff6b6b,color:#fff
+    style G fill:#51cf66,color:#fff
+    style I fill:#845ef7,color:#fff
+```
+
+### Detalle del Preprocesamiento
+
+```mermaid
+flowchart TD
+    INPUT[Campo de Entrada] --> STOP{Eliminar Stopwords}
+    STOP --> IDENT{Detectar Tokens de Identidad}
+    IDENT --> DIFF{Aplicar Tokens Diferenciadores}
+    DIFF --> GROUP{Resolver Grupos Semánticos}
+    GROUP --> OUTPUT[Campo Normalizado]
+
+    subgraph MongoDB
+        SW[(stopwords)]
+        TI[(tokens_identidad)]
+        TD2[(tokens_diferenciadores)]
+        GS[(grupos_semanticos)]
+    end
+
+    SW -.-> STOP
+    TI -.-> IDENT
+    TD2 -.-> DIFF
+    GS -.-> GROUP
 ```
 
 ---
 
 ## Tecnologías
+
+```mermaid
+graph LR
+    subgraph Backend
+        PY[Python 3.10+]
+        FA[FastAPI]
+        UV[Uvicorn]
+    end
+
+    subgraph Datos
+        MG[(MongoDB)]
+    end
+
+    subgraph ML["Machine Learning"]
+        NC[NeuronalCore - En Desarrollo]
+    end
+
+    PY --> FA
+    FA --> UV
+    PY --> MG
+    PY --> NC
+```
 
 | Componente         | Tecnología                                        |
 |--------------------|---------------------------------------------------|
@@ -101,64 +188,82 @@ ETL-MachingLearning/
 
 ---
 
-## Uso
-
-### Normalizador de JSON
-
-El módulo `normalizer.py` analiza estructuras JSON anidadas y genera una lista plana de campos con su tipo y valores. Es útil para comparar esquemas de diferentes sistemas.
-
-```bash
-cd SchemeMatcher
-python Service/normalizer.py
-```
-
-**Salida de ejemplo:**
-
-```
-=== ESTRUCTURA NETSUITE ===
-{'campo': 'links', 'tipo': 'array'}
-{'campo': 'links.rel', 'tipo': 'str', 'value': 'self'}
-{'campo': 'links.href', 'tipo': 'str', 'value': 'https://...'}
-{'campo': 'count', 'tipo': 'int', 'value': '2'}
-{'campo': 'items', 'tipo': 'array'}
-{'campo': 'items.custbody_bea_bp_primavera', 'tipo': 'str', 'value': 'Prefactura de Arrendamiento'}
-...
-
-=== ESTRUCTURA UNIFIER ===
-{'campo': 'options.bpname', 'tipo': 'str', 'value': 'Prefactura de Arrendamiento'}
-{'campo': 'data', 'tipo': 'array'}
-{'campo': 'data.uuu_record_last_update_date', 'tipo': 'str', 'value': '02-19-2026 15:19:46'}
-...
-```
-
-### API REST
-
-Inicia el servidor FastAPI con Uvicorn:
-
-```bash
-cd SchemeMatcher
-uvicorn main:app --reload
-```
-
-El servidor estará disponible en `http://127.0.0.1:8000`.
-
-**Endpoints disponibles:**
-
-| Método | Ruta            | Descripción                  |
-|--------|-----------------|------------------------------|
-| GET    | `/`             | Mensaje de bienvenida        |
-| GET    | `/hello/{name}` | Saludo personalizado         |
-
-**Documentación interactiva:**
-
-- Swagger UI: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-- ReDoc: [http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)
-
----
-
 ## Estructura de la Base de Datos MongoDB
 
 La clase `SemanticConfigMongoDb` define la arquitectura de base de datos para almacenar configuraciones semánticas y datos de entrenamiento.
+
+### Modelo Entidad-Relación
+
+```mermaid
+erDiagram
+    TOKENS_DIFERENCIADORES {
+        string token UK
+        string categoria
+        boolean activo
+        string notas
+        datetime fecha_alta
+        datetime fecha_modificacion
+    }
+
+    TOKENS_IDENTIDAD {
+        string token UK
+        string tipo
+        boolean activo
+        datetime fecha_alta
+    }
+
+    STOPWORDS {
+        string token UK
+        string contexto
+        boolean activo
+        datetime fecha_alta
+    }
+
+    GRUPOS_SEMANTICOS {
+        string grupo
+        string token
+        string idioma
+        boolean activo
+        datetime fecha_alta
+    }
+
+    CAMBIOS_LOG {
+        string coleccion
+        string accion
+        string token
+        object detalles
+        datetime fecha
+        string usuario
+    }
+
+    TRAINING_DATASETS {
+        ObjectId _id PK
+        string dataset_hash UK
+        string nombre
+        string version
+        object metadata
+        datetime fecha_creacion
+        datetime fecha_modificacion
+        boolean activo
+    }
+
+    TRAINING_PAIRS {
+        ObjectId dataset_id FK
+        int indice
+        string field_a
+        string field_b
+        int match
+        array tokens_a
+        array tokens_b
+        datetime fecha_creacion
+    }
+
+    TRAINING_DATASETS ||--o{ TRAINING_PAIRS : "contiene"
+    TOKENS_DIFERENCIADORES ||--o{ CAMBIOS_LOG : "registra"
+    TOKENS_IDENTIDAD ||--o{ CAMBIOS_LOG : "registra"
+    STOPWORDS ||--o{ CAMBIOS_LOG : "registra"
+    GRUPOS_SEMANTICOS ||--o{ CAMBIOS_LOG : "registra"
+```
 
 ### Colecciones de Configuración Semántica
 
@@ -179,19 +284,26 @@ Almacenan tokens clasificados para análisis semántico y preprocesamiento de te
 | `training_datasets` | Metadatos de datasets (hash SHA256, versión)   | `dataset_hash` único, `fecha_creacion`, `version`                 |
 | `training_pairs`    | Pares de campos con etiqueta match (1) o no (0) | `(dataset_id, field_a, field_b)` único, `(dataset_id, match)`     |
 
-### Flujo de Datos
+---
 
-```
-tokens_diferenciadores ─┐
-tokens_identidad ───────┤
-stopwords ──────────────┼──> Preprocesamiento de campos
-grupos_semanticos ──────┘
-                                    │
-                                    v
-                          training_datasets (1:N) ──> training_pairs
-                                    │
-                                    v
-                            Modelo ML (NeuronalCore)
+## Modelo de Entrenamiento
+
+El flujo de entrenamiento del modelo de matching sigue el siguiente proceso:
+
+```mermaid
+flowchart TD
+    A[Recopilar Pares de Campos] --> B[Etiquetar: Match / No Match]
+    B --> C[Almacenar en training_pairs]
+    C --> D[Generar Dataset con Hash SHA256]
+    D --> E[Preprocesar con Configuración Semántica]
+    E --> F[Entrenar Modelo Neuronal]
+    F --> G{Evaluar Precisión}
+    G -->|Aceptable| H[Modelo Listo para Producción]
+    G -->|Insuficiente| I[Ajustar Hiperparámetros]
+    I --> F
+
+    style H fill:#51cf66,color:#fff
+    style G fill:#ffd43b,color:#333
 ```
 
 **Características clave:**
